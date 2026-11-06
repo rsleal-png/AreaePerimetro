@@ -1,0 +1,715 @@
+/* eslint-disable no-undef */
+/**
+ * GeoGebra activity iDevice
+ *
+ * Released under Attribution-ShareAlike 4.0 International License.
+ * Authors: Ignacio Gros (http://gros.es/),  Javier Cayetano Rodríguez and Manuel Narváez Martínez for http://exelearning.net/
+ *
+ * License: http://creativecommons.org/licenses/by-sa/4.0/
+ *
+ * Loading icon generated with http://www.ajaxload.info/
+ */
+var $geogebraactivity = {
+    geogebraScript: 'https://cdn.geogebra.org/apps/deployggb.js',
+    defaults: {
+        width: 565,
+        height: 363,
+    },
+    startTime: '',
+    messages: ['', '', '', ''],
+    messagesScorm: [],
+    idevicePath: '',
+    isInExe: false,
+    optionsScorm: [],
+    /**
+     * GeoGebra API object per activity, keyed by its suffix.
+     *
+     * A page can carry several GeoGebra activities: the engine
+     * (`deployggb.js`) is loaded once and `enable()` then injects one
+     * independent applet per activity. GeoGebra publishes a single global
+     * `ggbApplet`, so reading the score from it cannot tell those applets
+     * apart — with two scored activities both buttons would read the same
+     * construction. Each applet's own API is captured here as it finishes
+     * loading, and the score is read from the one that belongs to the button
+     * the learner pressed.
+     */
+    applets: {},
+    scormAPIwrapper: 'libs/SCORM_API_wrapper.js',
+    scormFunctions: 'libs/SCOFunctions.js',
+
+    /**
+     * Parse the GeoGebra size helper classes and return [width, height].
+     *
+     * Accepts a DOM element (uses its `className`), a raw class string, or an
+     * already-split array of class tokens. Falls back to the configured
+     * defaults when a size class is missing, zero or non-numeric. Shared by
+     * both `indicator.getSize` and `addActivity` so the parsing lives in one
+     * place.
+     *
+     * @param {(Element|string|string[])} input
+     * @returns {[number, number]} [width, height]
+     */
+    parseSizeClasses: function (input) {
+        let w = $geogebraactivity.defaults.width;
+        let h = $geogebraactivity.defaults.height;
+        let classes;
+        if (Array.isArray(input)) {
+            classes = input;
+        } else {
+            let classString =
+                input && typeof input === 'object' ? input.className : input;
+            classes = (classString || '').split(' ');
+        }
+        for (let i = 0; i < classes.length; i++) {
+            if (classes[i].indexOf('auto-geogebra-width-') == 0) {
+                let parsedWidth = parseInt(
+                    classes[i].replace('auto-geogebra-width-', '')
+                );
+                if (!isNaN(parsedWidth) && parsedWidth > 0) w = parsedWidth;
+            } else if (classes[i].indexOf('auto-geogebra-height-') == 0) {
+                let parsedHeight = parseInt(
+                    classes[i].replace('auto-geogebra-height-', '')
+                );
+                if (!isNaN(parsedHeight) && parsedHeight > 0) h = parsedHeight;
+            }
+        }
+        return [w, h];
+    },
+
+    init: function () {
+        this.isInExe = eXe.app.isInExe();
+        const nx = $('.idevice_node.geogebra-activity')
+            .eq(0)
+            .attr('data-idevice-path');
+        this.idevicePath = this.isInExe
+            ? eXe.app.getIdeviceInstalledExportPath('geogebra-activity')
+            : nx;
+
+        this.activities = $('.auto-geogebra');
+
+        if (this.activities.length == 0) return; // Nothing to do
+
+        // Editing a iDevice
+        if ($('#exe-submitButton').length > 0) {
+            this.activities.hide();
+            if (typeof _ != 'undefined')
+                this.activities.before('<p>' + 'GeoGebra activity' + '</p>');
+            return;
+        }
+
+        if (!navigator.onLine) {
+            return;
+        }
+        if (!$('html').is('#exe-index')) {
+            this.scormAPIwrapper = '../libs/SCORM_API_wrapper.js';
+            this.scormFunctions = '../libs/SCOFunctions.js';
+        }
+
+        this.indicator.start();
+        if ($('body').hasClass('exe-scorm')) {
+            this.loadSCORM_API_wrapper();
+        } else {
+            this.loadGeogebraScript();
+        }
+    },
+
+    loadSCORM_API_wrapper: function () {
+        if (typeof pipwerks == 'undefined')
+            eXe.app.loadScript(
+                this.scormAPIwrapper,
+                '$geogebraactivity.loadSCOFunctions()'
+            );
+        else this.loadSCOFunctions();
+    },
+
+    loadSCOFunctions: function () {
+        if (typeof scorm == 'undefined')
+            eXe.app.loadScript(
+                this.scormFunctions,
+                '$geogebraactivity.loadGeogebraScript()'
+            );
+        else this.loadGeogebraScript();
+    },
+
+    loadGeogebraScript: function () {
+        if (typeof GGBApplet == 'undefined')
+            eXe.app.loadScript(
+                this.geogebraScript,
+                '$geogebraactivity.enable()'
+            );
+        else this.enable();
+    },
+
+    indicator: {
+        start: function () {
+            $geogebraactivity.activities.each(function (i) {
+                window['$geogebraactivityButtonText' + i] = '';
+                let txt = $('.scorm-button-text', this);
+                if (txt.length == 1) {
+                    txt = txt.html().replace(' (', '');
+                    txt = txt.slice(0, -1);
+                    window['$geogebraactivityButtonText' + i] = txt;
+                }
+                let size = $geogebraactivity.indicator.getSize(this);
+                let intro = '';
+                let instructions = $('.auto-geogebra-instructions', this);
+                if (instructions.length == 1 && instructions.text() != '') {
+                    intro = instructions.wrap(
+                        '<div class="auto-geogebra-instructions"></div>'
+                    );
+                }
+                let aft = '';
+                let after = $('.auto-geogebra-extra-content', this);
+                if (after.length == 1 && after.text() != '') {
+                    aft = after.wrap(
+                        '<div class="auto-geogebra-extra-content"></div>'
+                    );
+                }
+                let ath = '';
+                let tth = '';
+                let author = $('.auto-geogebra-author', this);
+                if (author.length == 1 && author.text() != '') {
+                    let math = author.text().split(',');
+                    if ((math.length == 5 || math.length == 7) && math[3] == '1') {
+                        ath =
+                            '<div class="auto-geogebra-author">' +
+                            unescape(math[4]) +
+                            ': <a href="' +
+                            unescape(math[1]) +
+                            '" target="_blank">' +
+                            unescape(math[0]) +
+                            '</a></div>';
+                    }
+                    const showTitle = math.length == 7 ? math[5] == '1' : true;
+                    if (showTitle && unescape(math[2]) !== '') {
+                        const titleLabel =
+                            math.length == 7 ? unescape(math[6]) : unescape(math[4]);
+                        tth =
+                            '<div class="auto-geogebra-title">' +
+                            titleLabel +
+                            ': <a href="' +
+                            unescape(math[1]) +
+                            '" target="_blank">' +
+                            unescape(math[2]) +
+                            '</a></div>';
+                    }
+                }
+                let messages = $('.auto-geogebra-messages-evaluation', this);
+                if (messages.length == 1 && messages.text() != '') {
+                    $geogebraactivity.messages = messages.text().split(',');
+                    for (
+                        let z = 0;
+                        z < $geogebraactivity.messages.length;
+                        z++
+                    ) {
+                        $geogebraactivity.messages[z] = unescape(
+                            $geogebraactivity.messages[z]
+                        );
+                    }
+                }
+
+                let messagesScorm = $('.auto-geogebra-messages-scorm', this);
+                if (messagesScorm.length == 1 && messagesScorm.text() != '') {
+                    $geogebraactivity.messagesScorm = messagesScorm
+                        .text()
+                        .split(',');
+                    for (
+                        let z = 0;
+                        z < $geogebraactivity.messagesScorm.length;
+                        z++
+                    ) {
+                        $geogebraactivity.messagesScorm[z] = unescape(
+                            $geogebraactivity.messagesScorm[z]
+                        );
+                    }
+                }
+                $(this)
+                    .before(intro)
+                    .after(aft)
+                    .after(ath)
+                    .after(tth)
+                    .wrap('<div class="auto-geogebra-wrapper"></div>')
+                    .addClass('auto-geogebra-loading')
+                    .css({
+                        width: size[0] + 'px',
+                        height: size[1] + 'px',
+                    })
+                    .html('');
+            });
+        },
+
+        getSize: function (e) {
+            return $geogebraactivity.parseSizeClasses(e);
+        },
+
+        getIDEvaluation: function (e) {
+            let eid = '';
+            let c = e.className;
+            c = c.split(' ');
+            for (let i = 0; i < c.length; i++) {
+                if (c[i].indexOf('auto-geogebra-evaluation-id-') == 0)
+                    eid = c[i].replace('auto-geogebra-evaluation-id', '');
+            }
+            return eid;
+        },
+        stop: function () {
+            $geogebraactivity.activities
+                .removeClass('auto-geogebra-loading')
+                .css('min-height', 'auto');
+        },
+    },
+
+    enable: function () {
+        this.activities.each(function (i) {
+            setTimeout(function () {
+                $geogebraactivity.indicator.stop();
+            }, 3000);
+            let c = this.className;
+            c = c.split(' ');
+            if (c.length > 1) {
+                let id = c[1].replace('auto-geogebra-', '');
+                $geogebraactivity.addActivity(this, id, c, i);
+            }
+        });
+        this.startTime = Date.now();
+    },
+
+    addActivity: function (e, id, c, inst) {
+        let sfx = id + inst;
+        $(e).html('').css('margin', '0 auto');
+        e.id = 'auto-geogebra-' + sfx;
+        let size = $geogebraactivity.parseSizeClasses(c);
+        let width = size[0];
+        let height = size[1];
+        let lang = 'en';
+        let borderColor = '#FFFFFF';
+        let scale = 1;
+        let evaluationID = '';
+        let ideviceID = '';
+        let weighted = 100;
+        // Written only when the author customised the mark (see the edition
+        // code), so no class means "follow the project" -- which is also how
+        // content saved before this option existed reads.
+        let passScoreMode = 'global';
+        let passScoreCustom = null;
+        for (let i = 0; i < c.length; i++) {
+            let currentClass = c[i];
+            if (currentClass.indexOf('language-') == 0) {
+                lang = currentClass.replace('language-', '');
+            } else if (currentClass.indexOf('auto-geogebra-border-') == 0) {
+                currentClass = currentClass.replace(
+                    'auto-geogebra-border-',
+                    ''
+                );
+                borderColor = '#' + currentClass;
+            } else if (currentClass.indexOf('auto-geogebra-scale-') == 0) {
+                scale =
+                    parseInt(currentClass.replace('auto-geogebra-scale-', '')) /
+                    100;
+            } else if (
+                currentClass.indexOf('auto-geogebra-evaluation-id-') == 0
+            ) {
+                evaluationID = currentClass.replace(
+                    'auto-geogebra-evaluation-id-',
+                    ''
+                );
+                evaluationID = evaluationID == '0' ? '' : evaluationID;
+            } else if (currentClass.indexOf('auto-geogebra-ideviceid-') == 0) {
+                ideviceID = currentClass.replace(
+                    'auto-geogebra-ideviceid-',
+                    ''
+                );
+            } else if (currentClass.indexOf('auto-geogebra-weight-') == 0) {
+                weighted = currentClass.replace('auto-geogebra-weight-', '');
+                weighted = parseInt(weighted);
+            } else if (
+                currentClass.indexOf('auto-geogebra-pass-score-') == 0
+            ) {
+                passScoreMode = 'custom';
+                passScoreCustom = parseFloat(
+                    currentClass.replace('auto-geogebra-pass-score-', '')
+                );
+            }
+        }
+
+        let parameters = {
+            id: 'auto-geogebra-' + sfx,
+            width: width,
+            height: height,
+            showMenuBar: c.indexOf('showMenuBar') > -1 ? true : false,
+            showAlgebraInput: c.indexOf('showAlgebraInput') > -1 ? true : false,
+            showToolBar: c.indexOf('showToolBar') > -1 ? true : false,
+            showToolBarHelp: c.indexOf('showToolBarHelp') > -1 ? true : false,
+            showResetIcon: c.indexOf('showResetIcon') > -1 ? true : false,
+            enableLabelDrags: false,
+            enableShiftDragZoom:
+                c.indexOf('enableShiftDragZoom') > -1 ? true : false,
+            enableRightClick: c.indexOf('enableRightClick') > -1 ? true : false,
+            errorDialogsActive:
+                c.indexOf('errorDialogsActive') > -1 ? true : false,
+            useBrowserForJS: false,
+            preventFocus: c.indexOf('preventFocus') > -1 ? true : false,
+            showZoomButtons: false,
+            showFullscreenButton:
+                c.indexOf('showFullscreenButton0') > -1 ? false : true,
+            scale: scale,
+            disableAutoScale: c.indexOf('disableAutoScale') > -1 ? true : false,
+            clickToLoad: false,
+            appName: 'classic',
+            showSuggestionButtons:
+                c.indexOf('showSuggestionButtons0') > -1 ? false : true,
+            buttonRounding: 0.7,
+            buttonShadows: c.indexOf('showMenuBar') > -1 ? true : false,
+            playButton: c.indexOf('playButton') > -1 ? true : false,
+            language: lang,
+            borderColor: borderColor,
+            // Capture this applet's own API as it finishes loading, so the
+            // score is read from the right construction when the page carries
+            // more than one activity. See $geogebraactivity.applets.
+            appletOnLoad: function (api) {
+                $geogebraactivity.applets[sfx] = api;
+            },
+            // use this instead of ggbBase64 to load a material from geogebra.org
+            material_id: id,
+        };
+        let views = {
+            is3D: 0,
+            AV: 1,
+            SV: 0,
+            CV: 0,
+            EV2: 0,
+            CP: 0,
+            PC: 0,
+            DA: 0,
+            FI: 0,
+            macro: 0,
+        };
+        window['applet' + sfx] = new GGBApplet(parameters, '5.0', views);
+        window['applet' + sfx].inject('auto-geogebra-' + sfx);
+
+        // Get score button
+        let options = $geogebraactivity.getOptions(
+            sfx,
+            weighted,
+            $geogebraactivity.messagesScorm,
+            evaluationID,
+            { passScoreMode, passScoreCustom }
+        );
+        if (
+            (c.length > 2 && c[2] == 'auto-geogebra-scorm') ||
+            (ideviceID && evaluationID && evaluationID.length > 4)
+        ) {
+            options.textButtonScorm =
+                window['$geogebraactivityButtonText' + inst] ||
+                options.textButtonScorm;
+            let fB =
+                $exeDevices.iDevice.gamification.scorm.addButtonScoreNew(
+                    options
+                );
+            $(e).after(fB);
+            $(e)
+                .closest('.idevice_node')
+                .on('click', '.Games-SendScore', function (e) {
+                    e.preventDefault();
+                    $geogebraactivity.sendScore(options);
+                    $geogebraactivity.saveEvaluation(options);
+                });
+            $(e)
+                .closest('.idevice_node ')
+                .find('.Games-registerActivity')
+                .hide();
+            $geogebraactivity.optionsScorm.push(options);
+            if (c.length > 2 && c[2] == 'auto-geogebra-scorm') {
+                $exeDevices.iDevice.gamification.scorm.registerActivity(
+                    options
+                );
+                if (typeof pipwerks != 'undefined' && pipwerks.SCORM) {
+                    $(e)
+                        .closest('.idevice_node')
+                        .find('.Games-registerActivity')
+                        .show();
+                }
+            }
+            const hasScorm12 = typeof window.API !== 'undefined';
+            const hasScorm2004 = typeof window.API_1484_11 !== 'undefined';
+            if (
+                evaluationID &&
+                evaluationID.length > 4 &&
+                !hasScorm12 &&
+                !hasScorm2004
+            ) {
+                $('#auto-geogebra-' + sfx)
+                    .closest('.idevice_node')
+                    .find('.Games-RepeatActivity')
+                    .hide();
+            }
+        }
+
+        $geogebraactivity.showPassScoreNotice(
+            options,
+            c.length > 2 && c[2] == 'auto-geogebra-scorm',
+            !!(ideviceID && evaluationID && evaluationID.length > 4)
+        );
+
+        setTimeout(function () {
+            if (options.evaluation) {
+                $exeDevices.iDevice.gamification.report.updateEvaluationIcon(
+                    options,
+                    this.isInExe
+                );
+            } else {
+                $geogebraactivity.removeEvaluationIcon(options);
+            }
+        }, 500);
+    },
+
+    /**
+     * Ask for the notice of the minimum score for one applet.
+     *
+     * getOptions() marks every applet isScorm 2, because the save button is the
+     * only way it can report. Whether the author turned saving on is the
+     * `auto-geogebra-scorm` class, and the progress report needs its
+     * identifier, so the shared runtime is handed what the activity really
+     * does rather than what getOptions() assumes.
+     *
+     * Placed before the applet's wrapper, which scrolls sideways with a wide
+     * construction: below the instructions, above the applet.
+     *
+     * @param {Object} options The applet's options (see getOptions).
+     * @param {boolean} saving Whether the author turned score saving on.
+     * @param {boolean} reporting Whether the progress report is on.
+     * @returns {jQuery|null} The notice, or null when none is shown.
+     */
+    showPassScoreNotice: function (options, saving, reporting) {
+        const judged = Object.assign({}, options, {
+            isScorm: saving ? 2 : 0,
+            evaluation: reporting,
+            evaluationID: reporting ? options.evaluationID : '',
+        });
+        return $exeDevices.iDevice.gamification.report.showPassScoreNotice(
+            judged,
+            $('#' + options.main).parent('.auto-geogebra-wrapper')
+        );
+    },
+    removeEvaluationIcon: function (options) {
+        if (!options || !options.main || !options.idevice) return;
+
+        const $main = $('#' + options.main);
+        let $idevice = $main.closest(`.${options.idevice}`);
+        if (!$idevice.length) {
+            $idevice = $main.closest('.idevice_node');
+        }
+
+        $idevice.find('.Games-ReportIconDiv').remove();
+        if (options.id) {
+            $('#ac-' + options.id).remove();
+        }
+    },
+    getIdeviceID: function (sfx) {
+        const ideviceid =
+            $('#auto-geogebra-' + sfx)
+                .closest(`div.idevice_node.geogebra-activity`)
+                .attr('id') || '';
+
+        return ideviceid;
+    },
+
+    /**
+     * @param {Object} [passScore] `{ passScoreMode, passScoreCustom }` parsed
+     * from the markup. Omitted by callers that have no markup to read, which
+     * leaves the activity following the project.
+     */
+    getOptions: function (sfx, weighted, messagesScorm, evaluationID, passScore) {
+        evaluationID = evaluationID && evaluationID !== '0' ? evaluationID : '';
+        let messages = $geogebraactivity.messages;
+        let messagesEval = [];
+        for (let z = 0; z < messages.length; z++) {
+            messagesEval.push(unescape(messages[z]));
+        }
+
+        let options = {
+            id: $geogebraactivity.getIdeviceID(sfx),
+            main: 'auto-geogebra-' + sfx,
+            // Which applet this button reads its score from (see getApplet).
+            appletSuffix: sfx,
+            scorerp: 0,
+            weighted: weighted ?? 100,
+            evaluation: evaluationID.length !== 0,
+            evaluationID: evaluationID,
+            passScoreMode: passScore?.passScoreMode ?? 'global',
+            passScoreCustom: passScore?.passScoreCustom ?? null,
+            isInExe: this.isInExe,
+            // The container the progress report icon and its anchor go into,
+            // found with closest() from `main`: the wrapper the runtime puts
+            // around each applet, so every applet shows its own result. It was
+            // 'geogebra-activityIdevice', a class only the editor adds to the
+            // iDevice body, so outside the editor no result was shown.
+            idevice: 'auto-geogebra-wrapper',
+            idevicePath: this.idevicePath,
+            textButtonScorm: $geogebraactivity.messages[3],
+            isScorm: 2,
+            msgs: {
+                msgScoreScorm:
+                    typeof messagesScorm[0] != 'undefined'
+                        ? messagesScorm[0]
+                        : '',
+                msgScore:
+                    typeof messagesScorm[2] != 'undefined'
+                        ? messagesScorm[2]
+                        : '',
+                msgWeight:
+                    typeof messagesScorm[3] != 'undefined'
+                        ? messagesScorm[3]
+                        : '',
+                msgYouLastScore:
+                    typeof messagesScorm[4] != 'undefined'
+                        ? messagesScorm[4]
+                        : '',
+                msgOnlySaveScore: 'You can only save the score once!',
+                msgOnlySave: 'You can only save once',
+                msgOnlySaveAuto:
+                    'Your score will be saved after each question. You can only play once.',
+                msgSaveAuto:
+                    'Your score will be automatically saved after each question.',
+                msgSeveralScore:
+                    'You can save the score as many times as you want',
+                msgPlaySeveralTimes:
+                    'You can do this activity as many times as you want',
+                msgUncompletedActivity:
+                    typeof messagesEval[0] != 'undefined'
+                        ? messagesEval[0]
+                        : '',
+                // The editor serialises this list in a fixed order, the same in
+                // every version of this iDevice: [0] incomplete, [1] passed,
+                // [2] not passed, [3] the save button's caption. Two of the
+                // names below were bound to the wrong slots, so the progress
+                // report told a learner who passed that they had not and a
+                // learner who failed that they had passed — and paired each
+                // with the opposite icon, since showEvaluationIcon shows the
+                // error icon with msgUnsuccessfulActivity and the success icon
+                // with msgSuccessfulActivity.
+                msgSuccessfulActivity:
+                    typeof messagesEval[1] != 'undefined'
+                        ? messagesEval[1]
+                        : 'Activity: Passed. Score: %s',
+                msgUnsuccessfulActivity:
+                    typeof messagesEval[2] != 'undefined'
+                        ? messagesEval[2]
+                        : 'Activity: Not passed. Score: %s',
+                // From the SCORM list, whose second entry is exactly this and
+                // was never read by anything. It used to come from [3] of the
+                // list above, which is the save button's caption — the one
+                // textButtonScorm already takes — so the score line read
+                // "Save score: 6.67".
+                msgYouScore:
+                    typeof messagesScorm[1] != 'undefined'
+                        ? messagesScorm[1]
+                        : 'Your score',
+                // [4] of the evaluation list, appended after the save button's
+                // caption. Content saved before it has four entries, and no
+                // literal here: the shared runtime then uses the page's own
+                // text, in the content language.
+                msgPassScore: messagesEval[4],
+            },
+        };
+        return options;
+    },
+
+    /**
+     * The GeoGebra API this activity's score must be read from.
+     *
+     * Falls back to the global `ggbApplet` when no per-activity API was
+     * captured — a page with a single activity behaves exactly as before, and
+     * so does one whose applet loaded without firing `appletOnLoad`.
+     *
+     * @param {Object} options The activity options (carries appletSuffix).
+     * @returns {Object|null} The applet API, or null when there is none.
+     */
+    getApplet: function (options) {
+        const suffix = options && options.appletSuffix;
+        if (suffix !== undefined && $geogebraactivity.applets[suffix]) {
+            return $geogebraactivity.applets[suffix];
+        }
+        return typeof ggbApplet !== 'undefined' ? ggbApplet : null;
+    },
+
+    /**
+     * Read the activity's score from its own applet, on the 0-10 scale.
+     *
+     * Answers 0 unless the construction defines all three SCORM variables:
+     * reading them first and formatting afterwards used to be the other way
+     * round, so a construction without them threw on `undefined.toFixed()`
+     * and took down the caller.
+     *
+     * @param {Object} options The activity options.
+     * @returns {string} The score, with two decimals.
+     */
+    getAppletScore: function (options) {
+        const applet = $geogebraactivity.getApplet(options);
+        const SCORE_RAW = 'SCORMRawScore';
+        const SCORE_MIN = 'SCORMMinScore';
+        const SCORE_MAX = 'SCORMMaxScore';
+
+        if (
+            !applet ||
+            !applet.exists(SCORE_RAW) ||
+            !applet.exists(SCORE_MIN) ||
+            !applet.exists(SCORE_MAX)
+        ) {
+            return (0).toFixed(2);
+        }
+
+        const score_raw = applet.getValue(SCORE_RAW),
+            score_min = applet.getValue(SCORE_MIN),
+            score_max = applet.getValue(SCORE_MAX);
+        // A degenerate range would divide by zero and report NaN to the LMS.
+        if (score_max === score_min) {
+            return (0).toFixed(2);
+        }
+
+        return (
+            ((score_raw - score_min) / (score_max - score_min)) *
+            10
+        ).toFixed(2);
+    },
+
+    saveEvaluation: function (options) {
+        const mOptions = JSON.parse(JSON.stringify(options));
+        const score = $geogebraactivity.getAppletScore(options);
+
+        mOptions.scorerp = score;
+        $exeDevices.iDevice.gamification.report.saveEvaluation(
+            mOptions,
+            mOptions.isInExe
+        );
+    },
+
+    sendScore: function (options) {
+        if (typeof pipwerks === 'undefined' || !pipwerks.SCORM) {
+            return;
+        }
+        const mOptions = JSON.parse(JSON.stringify(options));
+        mOptions.gameStarted = true;
+        // Saving is what finishes a GeoGebra activity, and the activity has to
+        // say so itself: an applet has no end of its own — the learner may keep
+        // dragging the construction for as long as they like — so this is the
+        // only completion signal there is. The shared runtime no longer infers
+        // one from the save button, so without this line the activity would
+        // never complete and its page would stay `incomplete` for good.
+        mOptions.gameOver = true;
+        pipwerks.SCORM.SetScoreMax('100');
+        pipwerks.SCORM.SetScoreMin('0');
+
+        mOptions.scorerp = $geogebraactivity.getAppletScore(options);
+
+        mOptions.previousScore = $geogebraactivity.previousScore || '';
+        mOptions.userName = $geogebraactivity.userName || '';
+
+        $exeDevices.iDevice.gamification.scorm.sendScoreNew(false, mOptions);
+
+        $geogebraactivity.previousScore = mOptions.previousScore;
+    },
+};
+$(function () {
+    $geogebraactivity.init();
+});
